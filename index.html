@@ -31,7 +31,7 @@
 </head>
 <body>
 <h1>🔌 多维表格 · 自定义 API 插件</h1>
-<div class="sub">选输入列(产品图/提示词) → 写提示词 → 并发生成图片/视频写回附件列</div>
+<div class="sub">选输入列 → 写提示词 → 批量生成文本/图片/视频写回表格</div>
 
 <div class="card">
   <h2>① 模型配置（存在本机浏览器，不上传）</h2>
@@ -39,9 +39,14 @@
   <input type="text" id="apiBase" placeholder="https://api.openai.com/v1/chat/completions 或任意中转地址">
   <label>API Key</label>
   <input type="password" id="apiKey" placeholder="sk-...">
-  <label>生图模型（不确定就留空，默认 gpt-image-2）</label>
-  <input type="text" id="model" list="modelList" placeholder="留空=gpt-image-2">
-  <datalist id="modelList">
+  <label id="modelLabel">对话模型（不确定就留空，默认 gpt-4o-mini）</label>
+  <input type="text" id="model" list="textModelList" placeholder="留空=gpt-4o-mini">
+  <datalist id="textModelList">
+    <option value="gpt-4o-mini">gpt-4o-mini（默认·便宜好用）</option>
+    <option value="gpt-4o">gpt-4o</option>
+    <option value="deepseek-chat">deepseek-chat</option>
+  </datalist>
+  <datalist id="imgModelList">
     <option value="gpt-image-2">gpt-image-2（默认·图生图保产品准）</option>
     <option value="doubao-seedream-4-0">豆包 Seedream 4.0</option>
   </datalist>
@@ -55,6 +60,7 @@
     <option value="image">🖼️ 图片生成（生成图写进附件列，如主图/分镜图）</option>
     <option value="video">🎬 视频生成（生成4-15秒视频写进附件列）</option>
   </select>
+  <div class="hint" id="textHint">文本模式：模型名填对话模型（如 gpt-4o-mini）；结果写进文本列。选了📎输入图=发给视觉模型看图写文。</div>
   <div class="hint" id="imgHint" style="display:none">图片模式：模型名填生图模型（如 gpt-image-2 / doubao-seedream-4-0）；选了📎输入图=图生图(保产品)，没选=文生图。</div>
   <div id="videoCfg" style="display:none">
     <div class="hint">🎬 视频模式独立配置。方舟官方没开浏览器跨域，API 地址填你服务器上的透传代理（形如 http://127.0.0.1:8000/api/ark/v3）；选中转站格式则直接填中转地址。⚠️ Seedance 2.0 约1元/秒（15秒≈15元/条），先用「只跑当前光标所在行」试效果再批量。</div>
@@ -105,13 +111,13 @@
     <label>任务ID列（可选，选一个文本列：任务号即时落表，中途关面板也能点「续查」接着拿片）</label>
     <select id="taskCol"></select>
   </div>
-  <label>输入列（点选，可多个；📎附件列：文本模式=发图给视觉模型，图片模式=作产品参考图）</label>
+  <label id="inputLabel">输入列（点选，可多个；📎附件列=发给视觉模型看图写文）</label>
   <div class="chips" id="inputChips"></div>
   <label>提示词模板（用【列名】引用输入列内容）</label>
   <textarea id="prompt" placeholder="例：你是电商专家。产品信息：【基础信息】，目标人群：【目标人群】。请输出……"></textarea>
-  <label>输出列（生成的图写这里，选附件列）</label>
+  <label id="outputLabel">输出列（生成的文案写这里，选文本列）</label>
   <select id="outputSel"></select>
-  <div class="row" id="sizeRow">
+  <div class="row" id="sizeRow" style="display:none">
     <div>
       <label>图片尺寸</label>
       <select id="imgSize">
@@ -140,7 +146,7 @@
   </div>
 </div>
 
-<button class="primary" id="runBtn">▶ 开始出图（附件列为空的行）</button>
+<button class="primary" id="runBtn">▶ 开始生成文本（文本列为空的行）</button>
 <button class="ghost" id="runSelBtn">只跑当前光标所在行</button>
 <button class="ghost" id="resumeBtn" style="display:none">⏯ 续查未完成的视频任务</button>
 <div id="log"></div>
@@ -518,15 +524,56 @@ const saveCfg = () => localStorage.setItem(CFG_KEY, JSON.stringify({
 }));
 const loadCfg = () => { try { return JSON.parse(localStorage.getItem(CFG_KEY)) || {}; } catch { return {}; } };
 
-// ── 任务类型切换:视频模式显示自己的配置块,按钮文案跟着换 ──
-const isVideoMode = () => $('taskType').value === 'video';
-const runBtnLabel = () => isVideoMode() ? '▶ 开始生成视频（附件列为空的行）' : '▶ 开始出图（附件列为空的行）';
+// ── 任务类型切换:文本/图片/视频各自显示对应表单,输出列类型跟着换 ──
+const taskType = () => $('taskType').value;
+const isVideoMode = () => taskType() === 'video';
+const isTextMode = () => taskType() === 'text';
+const isImageMode = () => taskType() === 'image';
+const runBtnLabel = () => {
+  if (isVideoMode()) return '▶ 开始生成视频（附件列为空的行）';
+  if (isTextMode()) return '▶ 开始生成文本（文本列为空的行）';
+  return '▶ 开始出图（附件列为空的行）';
+};
+function fillOutputSel() {
+  const cfg = loadCfg();
+  const sel = $('outputSel'); sel.innerHTML = '';
+  const wantAttach = !isTextMode();
+  const fs = fieldMetas.filter(f => wantAttach ? f.type === 17 : f.type === 1);
+  for (const f of fs) {
+    const o = document.createElement('option'); o.value = f.id; o.textContent = f.name;
+    if (cfg.output === f.id) o.selected = true; sel.appendChild(o);
+  }
+  if (!fs.length) {
+    const o = document.createElement('option'); o.value = '';
+    o.textContent = wantAttach ? '(本表没有附件列,请先建一个附件字段)' : '(本表没有文本列,请先建一个文本字段)';
+    sel.appendChild(o);
+  }
+}
 function toggleTaskUI() {
-  const v = isVideoMode();
-  $('videoCfg').style.display = v ? '' : 'none';
-  $('sizeRow').style.display = v ? 'none' : '';
-  $('resumeBtn').style.display = v ? '' : 'none';
+  const isVid = isVideoMode(), isTxt = isTextMode(), isImg = isImageMode();
+  $('videoCfg').style.display = isVid ? '' : 'none';
+  $('sizeRow').style.display = isImg ? '' : 'none';
+  $('resumeBtn').style.display = isVid ? '' : 'none';
+  $('textHint').style.display = isTxt ? '' : 'none';
+  $('imgHint').style.display = isImg ? '' : 'none';
+  if (isTxt) {
+    $('modelLabel').textContent = '对话模型（不确定就留空，默认 gpt-4o-mini）';
+    $('model').placeholder = '留空=gpt-4o-mini';
+    $('model').setAttribute('list', 'textModelList');
+    $('outputLabel').textContent = '输出列（生成的文案写这里，选文本列）';
+    $('inputLabel').textContent = '输入列（点选，可多个；📎附件列=发给视觉模型看图写文）';
+  } else if (isImg) {
+    $('modelLabel').textContent = '生图模型（不确定就留空，默认 gpt-image-2）';
+    $('model').placeholder = '留空=gpt-image-2';
+    $('model').setAttribute('list', 'imgModelList');
+    $('outputLabel').textContent = '输出列（生成的图写这里，选附件列）';
+    $('inputLabel').textContent = '输入列（点选，可多个；📎附件列=作产品参考图）';
+  } else {
+    $('outputLabel').textContent = '输出列（生成的视频写这里，选附件列）';
+    $('inputLabel').textContent = '输入列（点选，可多个；📎附件列=当首帧或参考图）';
+  }
   if (!running) $('runBtn').textContent = runBtnLabel();
+  if (fieldMetas.length) fillOutputSel();
 }
 
 // ── 全局状态 ──
@@ -552,10 +599,7 @@ async function refreshTable() {
     c.onclick = () => { c.classList.toggle('on'); saveCfg(); };
     chips.appendChild(c);
   }
-  const sel = $('outputSel'); sel.innerHTML = '';
-  const fs = fieldMetas.filter(f => f.type === 17);   // 输出=附件列
-  for (const f of fs) { const o = document.createElement('option'); o.value = f.id; o.textContent = f.name; if (cfg.output === f.id) o.selected = true; sel.appendChild(o); }
-  if (!fs.length) { const o = document.createElement('option'); o.value = ''; o.textContent = '(本表没有附件列,请先建一个附件字段)'; sel.appendChild(o); }
+  fillOutputSel();
   // 任务ID列(视频断点续查用):只列文本字段
   const tsel = $('taskCol'); tsel.innerHTML = '';
   const none = document.createElement('option'); none.value = ''; none.textContent = '(不落表·中途关面板未完成的任务会断)'; tsel.appendChild(none);
@@ -578,10 +622,10 @@ async function init() {
   if (cfg.imgSize) $('imgSize').value = cfg.imgSize;
   if (cfg.taskType) $('taskType').value = cfg.taskType;
   ['vidApiKind','vidApiBase','vidApiKey','vidModel','vidDur','vidRes','vidRatio','vidImgMode'].forEach(id => { if (cfg[id] != null && cfg[id] !== '') $(id).value = cfg[id]; });
-  await refreshTable();
   ['apiBase','apiKey','model','prompt','outputSel','concurrency','maxRows','imgSize','taskType','taskCol','vidApiKind','vidApiBase','vidApiKey','vidModel','vidDur','vidRes','vidRatio','vidImgMode'].forEach(id => $(id).addEventListener('change', saveCfg));
-  $('taskType').addEventListener('change', toggleTaskUI);
+  $('taskType').addEventListener('change', () => { toggleTaskUI(); saveCfg(); });
   toggleTaskUI();
+  try { await refreshTable(); } catch (e) { log('读取表格失败: ' + (e && e.message ? e.message : e), 1); }
   try {
     bitable.base.onSelectionChange(async () => {
       if (running) return;
@@ -611,8 +655,15 @@ async function listRecordIds() {
   return (await table.getRecordIdList()).filter(Boolean);
 }
 
-// 输出附件格是否已填
-async function cellFilled(fid, rid) { const v = await table.getCellValue(fid, rid).catch(() => null); return Array.isArray(v) && v.length > 0; }
+// 输出格是否已填:文本列看字符串,附件列看数组
+async function cellFilled(fid, rid) {
+  if (isTextMode()) {
+    const s = await table.getCellString(fid, rid).catch(() => '');
+    return !!(s && String(s).trim());
+  }
+  const v = await table.getCellValue(fid, rid).catch(() => null);
+  return Array.isArray(v) && v.length > 0;
+}
 
 // 该行选中的输入列是否真有内容(轻量,不取附件URL);没选输入列则靠模板→返回true不按行过滤
 async function hasInput(rid) {
@@ -653,6 +704,40 @@ async function buildInput(recordId) {
   if (extra.length) prompt = prompt ? prompt + '\n' + extra.join('\n') : extra.join('\n');
   if (!imageUrls.length && !prompt) return null;   // 既无参考图也无提示词→不生成
   return { text: prompt, imageUrls };
+}
+
+function chatEndpoint() {
+  let b = $('apiBase').value.trim().replace(/\/+$/, '');
+  if (!b) throw new Error('请先填 API 地址');
+  b = b.replace(/\/images\/(generations|edits).*$/, '').replace(/\/+$/, '');
+  if (/\/chat\/completions/.test(b)) return b;
+  return b + '/chat/completions';
+}
+
+async function callText(input, signal) {
+  const { text, imageUrls } = input;
+  const model = $('model').value.trim() || 'gpt-4o-mini';
+  let content;
+  if (imageUrls.length) {
+    content = [{ type: 'text', text: text || '请根据图片生成内容' }];
+    for (const u of imageUrls) content.push({ type: 'image_url', image_url: { url: u } });
+  } else {
+    content = text;
+  }
+  const resp = await fetch(chatEndpoint(), {
+    method: 'POST', signal,
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + $('apiKey').value },
+    body: JSON.stringify({ model, messages: [{ role: 'user', content }] })
+  });
+  if (!resp.ok) throw new Error('文本API ' + resp.status + ': ' + (await resp.text()).slice(0, 200));
+  const data = await resp.json();
+  const out = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
+  if (!out) throw new Error('文本返回无内容: ' + JSON.stringify(data).slice(0, 180));
+  return String(out).trim();
+}
+
+async function writeText(fid, rid, text) {
+  await table.setCellValue(fid, rid, text);
 }
 
 function imagesEndpoint(kind) { const b = $('apiBase').value.replace(/\/chat\/completions.*$/, '').replace(/\/+$/, ''); return b + '/images/' + kind; }
@@ -954,16 +1039,23 @@ async function processRecords(recordIds) {
       if (i >= recordIds.length) return;
       const rid = recordIds[i];
       try {
-        if ($('skipMode').value === 'skip' && await cellFilled(outFid, rid)) { skip++; log('· 行' + rid.slice(-6) + ' 已有图,跳过'); continue; }
+        if ($('skipMode').value === 'skip' && await cellFilled(outFid, rid)) { skip++; log('· 行' + rid.slice(-6) + (isTextMode() ? ' 已有文案,跳过' : ' 已有图,跳过')); continue; }
         const input = await buildInput(rid);
         if (!input) { skip++; log('· 行' + rid.slice(-6) + ' 无参考图/无提示词,跳过'); continue; }
         const ac = new AbortController(); aborters.add(ac);
         const timer = setTimeout(() => ac.abort(), REQ_TIMEOUT_MS);   // 硬超时防空转
         try {
-          const res = await callImage(input, ac.signal);
-          const sz = await writeImage(outFid, rid, res, ac.signal);
-          done++;
-          log('✅ 行' + rid.slice(-6) + ' 出图完成(' + (res.edit ? '图生图' : '文生图') + '·' + Math.round(sz / 1024) + 'KB)');
+          if (isTextMode()) {
+            const txt = await callText(input, ac.signal);
+            await writeText(outFid, rid, txt);
+            done++;
+            log('✅ 行' + rid.slice(-6) + ' 文本写入完成(' + txt.length + '字)');
+          } else {
+            const res = await callImage(input, ac.signal);
+            const sz = await writeImage(outFid, rid, res, ac.signal);
+            done++;
+            log('✅ 行' + rid.slice(-6) + ' 出图完成(' + (res.edit ? '图生图' : '文生图') + '·' + Math.round(sz / 1024) + 'KB)');
+          }
         } finally { clearTimeout(timer); aborters.delete(ac); }
       } catch (e) {
         fail++;
@@ -985,7 +1077,7 @@ async function guardedRun(getTargets, allowStopToggle, processor, opts) {
   if (isVid) {
     if (!$('vidApiBase').value.trim() || !$('vidApiKey').value.trim()) { log('视频模式:请先在「🎬 视频模式独立配置」里填 API 地址和 Key', 1); return; }
   } else if (!$('apiKey').value) { log('请先填 API Key', 1); return; }
-  if (!$('outputSel').value) { log('请先在表里建一个"附件"字段当输出列', 1); return; }
+  if (!$('outputSel').value) { log(isTextMode() ? '请先在表里建一个"文本"字段当输出列' : '请先在表里建一个"附件"字段当输出列', 1); return; }
   if (!(opts && opts.noPrompt) && !$('prompt').value.trim() && !selectedInputs().length) { log('请写提示词,或选一个含提示词/产品图的输入列', 1); return; }
   saveCfg();
   running = true; stopFlag = false;
