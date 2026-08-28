@@ -2,12 +2,11 @@
 
 # 🔌 多维表格接自定义 API 插件
 
-**让飞书多维表格直连任意大模型 API——文本批量生成 + 图片批量生成 + 视频批量生成，一个插件全搞定。**
+**飞书多维表格直连大模型 + 网页爬取：文本 / 图片 / 视频 / 爬取，一个插件全搞定。**
 
-自定义 API 地址 · 【列名】模板引用 · 并发+重试 · 结果直接写回表格
+uv 管理的 FastAPI 应用 · pi-py 统一 Agent · crawl4ai 爬取 · 模型配置落在本机 `~/.feishu-base-agent/models.yaml`
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-22c55e.svg)](LICENSE)
-[![单文件](https://img.shields.io/badge/单文件-index.html-2ee6d6.svg)](index.html)
 [![飞书多维表格](https://img.shields.io/badge/飞书-多维表格插件-4c8dff.svg)](#-安装到多维表格)
 
 </div>
@@ -16,71 +15,127 @@
 
 ## 它解决什么问题
 
-飞书多维表格自带的 AI 能力**没法接你自己的 API**：不能换中转站、不能指定模型、不能调用生图接口。做电商的经常需要"表格里 500 行产品信息，每行生成一条文案 / 一张主图"——这个插件就是干这个的：
+飞书多维表格自带的 AI 能力**没法接你自己的 API**：不能换中转站、不能指定模型、不能调用生图接口，也不能把网页正文抓回来写进表格。这个插件把后端跑在你自己的机器上：
 
-- 🔗 **任意 OpenAI 兼容接口**：API 地址、Key、模型名全都你自己填（支持各类中转站）
-- 📝 **文本任务**：按提示词模板批量生成文案/脚本/摘要，写进文本列
-- 🖼 **图片任务**：批量生图写进**附件列**（支持 gpt-image-2、豆包 Seedream 4.0，竖版/方形/横版三种尺寸；选了附件输入列还能**图生图保产品一致**）
-- 🎬 **视频任务**：批量生成 4-15 秒视频写进**附件列**（默认字节 Seedance 2.0，支持文生视频/首帧图生视频/多图参考保产品；也兼容 new-api 系中转站的 OpenAI 视频格式，可转调可灵/Vidu/万相等）
-- 🧩 **【列名】模板**：提示词里写 `【基础信息】【目标人群】`，自动替换成每一行的真实内容
-- ⚡ **并发 + 超时 + 重试**：几百行也能安心挂机跑，已有内容的行可跳过或覆盖
-- 🔒 **配置只存本机浏览器**，Key 不上传；内联官方 SDK，零外部依赖请求
+- 📝 **文本任务**：走后端 [pi-py](https://github.com/encyc/pi-py) Agent（`openai-completions` / `anthropic-messages`），提示词模板 `【列名】` 引用单元格，结果写进文本列。附件列可作为视觉模型输入。
+- 🖼 **图片任务**：浏览器直连 OpenAI 兼容生图接口，写进附件列（支持图生图）。
+- 🎬 **视频任务**：浏览器直连方舟 Seedance 或中转站 `/v1/videos`，异步提交→轮询→取片，任务 ID 可落表续查。
+- 🕷 **爬取任务**：后端调用 [crawl4ai](https://github.com/unclecode/crawl4ai) Python SDK，参数对齐一次 `arun()` 所需配置；写回可选文本列和/或附件（md / html / json / png / pdf / mhtml）。
+- 🗂 **模型库**：供应商与模型维护在 `~/.feishu-base-agent/models.yaml`，Key 支持 `${ENV_VAR}` / `env:NAME`，接口响应不回传明文 Key。
 
-## 🚀 安装到多维表格
+## 要求
 
-本插件就是一个 `index.html`，按飞书「自定义插件」方式接入：
+- Python **≥ 3.11**（推荐 3.12）
+- [uv](https://docs.astral.sh/uv/)
+- 首次使用爬取任务需要 Playwright Chromium（`crawl4ai-setup`）
 
-1. **拿到插件 URL**：
-   - 方式 A：直接用本仓库的 GitHub Pages 地址（见仓库右侧 About 栏链接）
-   - 方式 B：自己托管——把 `index.html` 放到任意静态服务器 / 内网地址
-2. 打开你的**飞书多维表格** → 右上角「插件」→「自定义插件」→ 添加插件，粘贴 URL
-3. 侧边栏打开插件，开始配置
+## 安装与启动
 
-> 本地开发调试：`python3 -m http.server 8080` 后用 `http://127.0.0.1:8080/index.html` 添加即可。
+```bash
+git clone <本仓库>
+cd feishu-base-custom-api
+uv sync
+uv run crawl4ai-setup          # 安装 Chromium，仅爬取任务需要
+uv run feishu-base-agent       # 默认 http://127.0.0.1:8000
+# 或
+uv run python -m feishu_base_agent --host 0.0.0.0 --port 8000
+```
 
-## 📖 使用（三步）
+首次启动会在 `~/.feishu-base-agent/models.yaml` 写入带注释的默认模板（openai / anthropic / deepseek）。可用环境变量覆盖配置目录：
 
-**① 模型配置**（存在本机浏览器，不上传）
-填 API 地址（如 `https://api.openai.com/v1/chat/completions` 或你的中转地址）、API Key、模型名。
+```bash
+export FEISHU_BASE_AGENT_DIR=/path/to/dir
+export OPENAI_API_KEY=sk-...
+export ANTHROPIC_API_KEY=...
+export DEEPSEEK_API_KEY=...
+```
 
-**② 任务配置**
+crawl4ai 的缓存目录默认在 `~/.feishu-base-agent/crawl4ai`（通过 `CRAWL4_AI_BASE_DIRECTORY` 注入，避免污染家目录）。
+
+## 模型配置（models.yaml）
+
+```yaml
+version: 1
+providers:
+  - id: deepseek
+    name: DeepSeek
+    api: openai-completions          # 或 anthropic-messages
+    base_url: https://api.deepseek.com/v1
+    api_key: ${DEEPSEEK_API_KEY}     # 明文 / ${ENV} / env:NAME
+    models:
+      - id: deepseek-chat
+        name: DeepSeek Chat
+        input: [text]
+        context_window: 64000
+        max_tokens: 8192
+```
+
+也可在插件侧栏「③ 模型库」里增删改，并点「测试连通」。`openai-responses` 协议本期未实现，下拉框里是禁用项。
+
+文本任务的 API Key **只存在后端 yaml / 环境变量**，不再随请求从浏览器上传。图片 / 视频任务仍按原设计把 Key 存在本机 localStorage，由浏览器直连上游。
+
+## 安装到多维表格
+
+1. 启动本服务，拿到插件 URL：
+   - 本机：`http://127.0.0.1:8000/`
+   - 远程部署必须 **HTTPS**（浏览器会拦截 https 页面调 http，mixed content）
+2. 打开飞书多维表格 → 右上角「插件」→「自定义插件」→ 添加，粘贴 URL
+3. 侧边栏打开插件，配置任务后开跑
+
+服务**不会**设置 `X-Frame-Options: DENY`，以便被飞书 iframe 嵌入。
+
+## 使用
+
+**① 选模型**  
+文本模式从模型库下拉选择；图片模式填 API 地址 / Key / 生图模型；视频模式用独立的方舟或中转站配置。
+
+**② 配任务**
+
 | 配置项 | 说明 |
 |---|---|
-| 任务类型 | 📝 文本生成（写文本列） / 🖼 图片生成（写附件列） / 🎬 视频生成（写附件列） |
+| 任务类型 | 文本 / 图片 / 视频 / 爬取 |
 | 输入列 | 点选一或多个列；附件列可作为视觉模型输入或图生图参考图 |
-| 提示词模板 | 用 `【列名】` 引用输入列，例：`产品信息：【基础信息】，目标人群：【目标人群】，请输出……` |
-| 输出列 | 文本任务选文本列，图片任务选附件列 |
+| 提示词模板 | 用 `【列名】` 引用输入列 |
+| 输出列 | 文本任务选文本列，图片/视频选附件列；爬取可分别选文本列与附件列 |
 | 并发 / 行数 / 已有内容 | 同时跑几行、最多处理几行、已填的行跳过还是覆盖 |
 
-**③ 开跑**
-「▶ 开始」批量跑空行，或「只跑当前光标所在行」单行试效果——先单行调好提示词，再批量挂机。
+**③ 开跑**  
+「▶ 开始」批量跑空行，或「只跑当前光标所在行」单行试效果。
 
-## 🎬 视频生成怎么配
+### 爬取任务要点
 
-视频 API 全行业都是**异步任务制**（提交 → 云端生成几分钟 → 取片），且官方接口普遍不给浏览器开跨域，所以视频模式有两条路：
+- **URL 来源**：指定一个文本列为网址，或在提示词里写 / 用 `【列名】` 拼出 `http(s)://...`
+- **写回**：只写文本、只写附件、或两者都写。文本格式包括 `raw_markdown` / `fit_markdown` / `cleaned_html` / 抽取 JSON 等
+- **附件格式**：`.md` / `.html` / `.json` / 截图 `.png` / `.pdf` / `.mhtml`
+- **过滤器**：中文页面请用 **pruning**（BM25 对中文分词效果差）。`fit_markdown` 只有启用过滤器后才有内容
+- **缓存**：UI 必须显式选择；crawl4ai 构造默认是 `bypass`，不是文档里写的 `enabled`
+- **抽取**：可选 Json CSS schema 或用模型库里的模型做 LLM 抽取
+- **深度爬取**：BFS / DFS / BestFirst + max_depth / max_pages
 
-**路线 A：火山方舟 Seedance（推荐，经你自己的服务器代理）**
-1. 在任意一台自己的 Node/Express 服务上挂一个透传代理（固定上游 `ark.cn-beijing.volces.com`，只转发不存 Key，几十行代码，见发布者提供的 `arkProxy.js` 参考实现）。⚠️ 代理跑在本机 `127.0.0.1` 可直接用 http；若部署到**远程服务器**共用，必须配 https——浏览器会拦截 https 页面调 http 远程地址（mixed content），CORS 配得再对也没用
-2. 插件里：接口格式选「火山方舟」，API 地址填代理地址（如 `http://127.0.0.1:8000/api/ark/v3`），Key 填你的方舟 ARK_API_KEY
-3. 模型留空默认 `doubao-seedance-2-0-260128`（4-15 秒、最高 2K、音画同步）
+高级参数与一次 crawl4ai `CrawlerRunConfig` 对齐（css_selector、excluded_tags、wait_for、js_code、scan_full_page、iframe、弹层、magic、shadow DOM、robots.txt 等）。
 
-**路线 B：中转站 OpenAI 视频格式**
-中转站若支持 `/v1/videos` 视频接口（new-api 系普遍 CORS 全放行），直接填中转地址 + Key 即可，无需代理；可经中转转调可灵 3.0 / Vidu / 万相等。
+### 视频生成
 
-**批量挂机保险：任务ID列（强烈建议配）**
-在表里建一个文本列并在插件里选为「任务ID列」——每行任务号提交后即时落表（⏳/✅ 前缀）。中途关掉插件面板、断网、超时都不怕：重新打开点「⏯ 续查未完成的视频任务」，接着把已付费的任务片子取回来，不重复扣钱。
+视频 API 全行业都是异步任务制。方舟官方接口普遍不给浏览器开跨域，需要你自己的透传代理（形如 `http://127.0.0.1:8000/api/ark/v3`）。中转站若支持 `/v1/videos` 可直连。建议配「任务ID列」防重复扣费，中途关掉面板可点「续查」。
 
-⚠️ **成本提醒**：Seedance 2.0 约 1 元/秒（15 秒 ≈ 15 元/条），先「只跑当前光标所在行」确认效果再批量；预算紧可换 fast 版或 mini 版（约半价）。
+## 开发
 
-## 💬 欢迎提意见！这个项目会持续维护
+```bash
+uv sync --group dev
+uv run pytest
+uv run python -m feishu_base_agent --reload
+```
 
-这个插件来自我自己电商运营的真实工作流（批量产品文案、批量主图），**代码完全公开，我会继续修改和更新**。
+目录：
 
-- 🐛 接口跑不通 / 写入失败 → [提 Bug](../../issues)，说清你的 API 类型
-- 💡 想支持新模型 / 新任务类型 / 新写回逻辑 → [提建议](../../issues)，被采纳的进下个版本
-- 🔧 全部代码就一个 `index.html`，想改直接改，PR 欢迎
-
-> 觉得有用的话点个 ⭐ Star，是对持续更新最大的支持。
+```
+src/feishu_base_agent/
+  app.py              FastAPI（GZip + 静态站）
+  models_store.py     models.yaml ↔ pi_ai.Model
+  agent_runner.py     pi_agent_core.Agent
+  crawler.py          复用的 AsyncWebCrawler
+  static/             零构建 vanilla 前端 + 内联 Lark SDK
+```
 
 ## License
 

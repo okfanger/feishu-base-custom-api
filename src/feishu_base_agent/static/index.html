@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>万能AI列填充器</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<h1>🔌 多维表格 · 自定义 API 插件</h1>
+<div class="sub">选输入列 → 写提示词 → 批量生成文本/图片/视频/爬取写回表格</div>
+
+<div class="card" id="backendModelCard">
+  <h2>① 对话模型（存本机 ~/.feishu-base-agent/models.yaml）</h2>
+  <label>选用模型</label>
+  <select id="modelRef"></select>
+  <div class="hint" id="modelKeyHint">打开下方「模型库」添加供应商与 API Key。</div>
+</div>
+
+<div class="card" id="directApiCard" style="display:none">
+  <h2>① 模型配置（存在本机浏览器，不上传）</h2>
+  <label>API 地址</label>
+  <input type="text" id="apiBase" placeholder="https://api.openai.com/v1/chat/completions 或任意中转地址">
+  <label>API Key</label>
+  <input type="password" id="apiKey" placeholder="sk-...">
+  <label id="modelLabel">生图模型（不确定就留空，默认 gpt-image-2）</label>
+  <input type="text" id="model" list="imgModelList" placeholder="留空=gpt-image-2">
+  <datalist id="imgModelList">
+    <option value="gpt-image-2">gpt-image-2（默认·图生图保产品准）</option>
+    <option value="doubao-seedream-4-0">豆包 Seedream 4.0</option>
+  </datalist>
+</div>
+
+<div class="card">
+  <h2>② 任务配置</h2>
+  <label>任务类型</label>
+  <select id="taskType">
+    <option value="text">📝 文本生成（写进文本列，如文案/脚本）</option>
+    <option value="image">🖼️ 图片生成（生成图写进附件列，如主图/分镜图）</option>
+    <option value="video">🎬 视频生成（生成4-15秒视频写进附件列）</option>
+    <option value="crawl">🕷️ 网页爬取（调用 crawl4ai，写回文本和/或附件）</option>
+  </select>
+  <div class="hint" id="textHint">文本模式：走后端 pi-py Agent。选了📎输入图=下载后发给视觉模型看图写文。</div>
+  <div class="hint" id="imgHint" style="display:none">图片模式：浏览器直连生图 API。选了📎输入图=图生图(保产品)，没选=文生图。</div>
+  <div class="hint" id="crawlHint" style="display:none">爬取模式：从 URL 列（或提示词里的链接）抓取页面，可选写回文本列和/或附件列。中文页优先用 pruning 过滤器。</div>
+  <div id="videoCfg" style="display:none">
+    <div class="hint">🎬 视频模式独立配置。方舟官方没开浏览器跨域，API 地址填你服务器上的透传代理（形如 http://127.0.0.1:8000/api/ark/v3）；选中转站格式则直接填中转地址。⚠️ Seedance 2.0 约1元/秒（15秒≈15元/条），先用「只跑当前光标所在行」试效果再批量。</div>
+    <label>接口格式</label>
+    <select id="vidApiKind">
+      <option value="ark">火山方舟 · Seedance（经服务器代理）</option>
+      <option value="oai">中转站 · OpenAI 视频格式（/v1/videos）</option>
+    </select>
+    <label>视频 API 地址</label>
+    <input type="text" id="vidApiBase" placeholder="http://127.0.0.1:8000/api/ark/v3 或中转站地址">
+    <label>视频 API Key</label>
+    <input type="password" id="vidApiKey" placeholder="方舟 ARK_API_KEY 或中转站 Key">
+    <label>视频模型（不确定就留空，默认 Seedance 2.0）</label>
+    <input type="text" id="vidModel" list="vidModelList" placeholder="留空=doubao-seedance-2-0-260128">
+    <datalist id="vidModelList">
+      <option value="doubao-seedance-2-0-260128">Seedance 2.0（默认·4-15秒·最高2K·音画同步）</option>
+      <option value="doubao-seedance-2-0-fast-260128">Seedance 2.0 Fast（便宜·不支持1080p）</option>
+      <option value="doubao-seedance-2-0-mini-260615">Seedance 2.0 mini（约半价·最高720P）</option>
+    </datalist>
+    <div class="row">
+      <div>
+        <label>时长（秒，4-15）</label>
+        <input type="number" id="vidDur" value="15" min="4" max="15">
+      </div>
+      <div>
+        <label>分辨率</label>
+        <select id="vidRes">
+          <option value="720p">720p（推荐）</option>
+          <option value="480p">480p（最便宜）</option>
+          <option value="1080p">1080p</option>
+        </select>
+      </div>
+      <div>
+        <label>画面比例</label>
+        <select id="vidRatio">
+          <option value="adaptive">自适应（跟参考图）</option>
+          <option value="9:16">竖版 9:16</option>
+          <option value="16:9">横版 16:9</option>
+          <option value="1:1">方形 1:1</option>
+        </select>
+      </div>
+    </div>
+    <label>📎输入图的用法（选了附件输入列才生效）</label>
+    <select id="vidImgMode">
+      <option value="first">当首帧（画面从这张图动起来）</option>
+      <option value="ref">当参考图（保产品长相，Seedance 2.0 多图参考）</option>
+    </select>
+    <label>任务ID列（可选，选一个文本列：任务号即时落表，中途关面板也能点「续查」接着拿片）</label>
+    <select id="taskCol"></select>
+  </div>
+
+  <div id="crawlCfg" style="display:none">
+    <label>URL 列（该列单元格当作要抓的网址）</label>
+    <select id="crawlUrlCol"></select>
+    <div class="hint">也可以在提示词里写完整 URL，或用【列名】拼出地址。</div>
+    <label>写回方式</label>
+    <select id="crawlWriteMode">
+      <option value="text">只写文本列</option>
+      <option value="attach">只写附件列</option>
+      <option value="both">文本 + 附件都写</option>
+    </select>
+    <label>文本列（写回 markdown / HTML / JSON）</label>
+    <select id="crawlTextOut"></select>
+    <label>文本格式</label>
+    <select id="crawlTextFormat">
+      <option value="raw_markdown">raw_markdown（完整 Markdown）</option>
+      <option value="fit_markdown">fit_markdown（过滤后正文，需启用内容过滤器）</option>
+      <option value="markdown_with_citations">markdown_with_citations</option>
+      <option value="cleaned_html">cleaned_html</option>
+      <option value="html">原始 html</option>
+      <option value="extracted_content">extracted_content（抽取 JSON）</option>
+      <option value="links">links（链接 JSON）</option>
+      <option value="metadata">metadata</option>
+    </select>
+    <label>附件列</label>
+    <select id="crawlAttachOut"></select>
+    <label>附件格式（可多选）</label>
+    <div class="check" id="crawlFileFormats">
+      <label><input type="checkbox" value="md" checked> .md</label>
+      <label><input type="checkbox" value="html"> .html</label>
+      <label><input type="checkbox" value="json"> .json</label>
+      <label><input type="checkbox" value="png"> 截图 .png</label>
+      <label><input type="checkbox" value="pdf"> .pdf</label>
+      <label><input type="checkbox" value="mhtml"> .mhtml</label>
+    </div>
+    <label>Markdown 附件用哪一版</label>
+    <select id="crawlMdVariant">
+      <option value="raw">raw_markdown</option>
+      <option value="fit">fit_markdown</option>
+    </select>
+    <label>内容过滤器（中文页请用 pruning）</label>
+    <select id="crawlFilter">
+      <option value="none">无</option>
+      <option value="pruning">pruning（推荐中文）</option>
+      <option value="bm25">bm25（需查询词，中文效果差）</option>
+    </select>
+    <div class="row">
+      <div>
+        <label>缓存</label>
+        <select id="crawlCache">
+          <option value="bypass">bypass（默认，不读缓存）</option>
+          <option value="enabled">enabled</option>
+          <option value="disabled">disabled</option>
+          <option value="read_only">read_only</option>
+          <option value="write_only">write_only</option>
+        </select>
+      </div>
+      <div>
+        <label>抽取策略</label>
+        <select id="crawlExtract">
+          <option value="none">无</option>
+          <option value="json_css">Json CSS</option>
+          <option value="llm">LLM 抽取</option>
+        </select>
+      </div>
+    </div>
+    <details class="adv">
+      <summary>高级参数（对齐 crawl4ai CrawlerRunConfig）</summary>
+      <label>css_selector</label>
+      <input type="text" id="crawlCss" placeholder="只保留匹配节点，例如 article">
+      <label>excluded_tags（逗号分隔）</label>
+      <input type="text" id="crawlExcludedTags" placeholder="nav,footer,script,style">
+      <label>excluded_selector</label>
+      <input type="text" id="crawlExcludedSel" placeholder="#ads, .tracker">
+      <label>wait_for（css:.x 或 js:() => bool）</label>
+      <input type="text" id="crawlWaitFor">
+      <label>js_code（页面加载后执行）</label>
+      <textarea class="short" id="crawlJs"></textarea>
+      <div class="row">
+        <div>
+          <label>page_timeout (ms)</label>
+          <input type="number" id="crawlPageTimeout" value="60000">
+        </div>
+        <div>
+          <label>word_count_threshold</label>
+          <input type="number" id="crawlWordCount" value="1">
+        </div>
+      </div>
+      <div class="check">
+        <label><input type="checkbox" id="crawlScanFull"> scan_full_page</label>
+        <label><input type="checkbox" id="crawlIframes"> process_iframes</label>
+        <label><input type="checkbox" id="crawlOverlay"> remove_overlay_elements</label>
+        <label><input type="checkbox" id="crawlConsent"> remove_consent_popups</label>
+        <label><input type="checkbox" id="crawlMagic"> magic</label>
+        <label><input type="checkbox" id="crawlShadow"> flatten_shadow_dom</label>
+        <label><input type="checkbox" id="crawlExtLinks"> exclude_external_links</label>
+        <label><input type="checkbox" id="crawlRobots"> check_robots_txt</label>
+      </div>
+      <label>Json CSS schema（抽取=json_css 时）</label>
+      <textarea class="short" id="crawlCssSchema" placeholder='{"name":"...","baseSelector":"...","fields":[...]}'></textarea>
+      <label>LLM 抽取所用模型</label>
+      <select id="crawlLlmModel"></select>
+      <label>LLM instruction</label>
+      <textarea class="short" id="crawlLlmInstruction" placeholder="抽取页面里的产品名和价格，输出 JSON"></textarea>
+      <div class="row">
+        <div>
+          <label>深度爬取</label>
+          <select id="crawlDeep">
+            <option value="">关闭</option>
+            <option value="BFS">BFS</option>
+            <option value="DFS">DFS</option>
+            <option value="BestFirst">BestFirst</option>
+          </select>
+        </div>
+        <div>
+          <label>max_depth</label>
+          <input type="number" id="crawlDeepDepth" value="1" min="1">
+        </div>
+        <div>
+          <label>max_pages</label>
+          <input type="number" id="crawlDeepPages" value="10" min="1">
+        </div>
+      </div>
+    </details>
+  </div>
+
+  <label id="inputLabel">输入列（点选，可多个；📎附件列=发给视觉模型看图写文）</label>
+  <div class="chips" id="inputChips"></div>
+  <label>提示词模板（用【列名】引用输入列内容）</label>
+  <textarea id="prompt" placeholder="例：你是电商专家。产品信息：【基础信息】，目标人群：【目标人群】。请输出……"></textarea>
+  <label id="outputLabel">输出列（生成的文案写这里，选文本列）</label>
+  <select id="outputSel"></select>
+  <div class="row" id="sizeRow" style="display:none">
+    <div>
+      <label>图片尺寸</label>
+      <select id="imgSize">
+        <option value="1024x1536">竖版 1024×1536（主图/详情页）</option>
+        <option value="1024x1024">方形 1024×1024</option>
+        <option value="1536x1024">横版 1536×1024</option>
+      </select>
+    </div>
+  </div>
+  <div class="row">
+    <div>
+      <label>最多处理几行</label>
+      <input type="number" id="maxRows" value="10" min="1">
+    </div>
+    <div>
+      <label>并发数(同时几行)</label>
+      <input type="number" id="concurrency" value="3" min="1" max="10">
+    </div>
+    <div>
+      <label>已有内容的行</label>
+      <select id="skipMode">
+        <option value="skip">跳过（推荐）</option>
+        <option value="overwrite">覆盖重写</option>
+      </select>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>③ 模型库</h2>
+  <div class="hint">配置写到本机 <code>~/.feishu-base-agent/models.yaml</code>，Key 可用 <code>${ENV_VAR}</code>。协议目前支持 openai-completions / anthropic-messages。</div>
+  <div id="providersList"></div>
+  <details class="adv" id="providerFormWrap">
+    <summary>新增 / 编辑供应商</summary>
+    <input type="hidden" id="pfMode" value="create">
+    <label>供应商 id</label>
+    <input type="text" id="pfId" placeholder="deepseek">
+    <label>显示名</label>
+    <input type="text" id="pfName" placeholder="DeepSeek">
+    <label>协议</label>
+    <select id="pfApi">
+      <option value="openai-completions">openai-completions</option>
+      <option value="anthropic-messages">anthropic-messages</option>
+      <option value="openai-responses" disabled>openai-responses（暂不支持）</option>
+    </select>
+    <label>Base URL</label>
+    <input type="text" id="pfBase" placeholder="https://api.deepseek.com/v1">
+    <label>API Key（留空则保留原值；可写 ${ENV_VAR}）</label>
+    <input type="text" id="pfKey" placeholder="${DEEPSEEK_API_KEY}">
+    <label>模型（每行：id | 显示名 | text 或 text,image）</label>
+    <textarea class="short" id="pfModels" placeholder="deepseek-chat | DeepSeek Chat | text"></textarea>
+    <div class="form-actions">
+      <button class="tiny primary" type="button" id="pfSave">保存供应商</button>
+      <button class="tiny" type="button" id="pfReset">清空表单</button>
+    </div>
+  </details>
+</div>
+
+<button class="primary" id="runBtn">▶ 开始生成文本（文本列为空的行）</button>
+<button class="ghost" id="runSelBtn">只跑当前光标所在行</button>
+<button class="ghost" id="resumeBtn" style="display:none">⏯ 续查未完成的视频任务</button>
+<div id="log"></div>
+
+<script type="module" src="/lark-sdk.js"></script>
+<script type="module" src="/js/app.js"></script>
+</body>
+</html>
