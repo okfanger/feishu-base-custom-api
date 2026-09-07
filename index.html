@@ -514,15 +514,32 @@ async function loadSDK() {
 
 // ── 配置持久化 ──
 const CFG_KEY = 'ai-filler-cfg';
-const saveCfg = () => localStorage.setItem(CFG_KEY, JSON.stringify({
-  apiBase: $('apiBase').value, apiKey: $('apiKey').value, model: $('model').value, prompt: $('prompt').value,
-  inputs: [...document.querySelectorAll('.chip.on')].map(c => c.textContent),
-  output: $('outputSel').value, concurrency: $('concurrency').value, maxRows: $('maxRows').value, imgSize: $('imgSize').value,
-  taskType: $('taskType').value, taskCol: $('taskCol').value,
-  vidApiKind: $('vidApiKind').value, vidApiBase: $('vidApiBase').value, vidApiKey: $('vidApiKey').value,
-  vidModel: $('vidModel').value, vidDur: $('vidDur').value, vidRes: $('vidRes').value, vidRatio: $('vidRatio').value, vidImgMode: $('vidImgMode').value,
-}));
 const loadCfg = () => { try { return JSON.parse(localStorage.getItem(CFG_KEY)) || {}; } catch { return {}; } };
+let activeTaskType = null;
+const modeCfgKey = (kind, type) => type + kind.charAt(0).toUpperCase() + kind.slice(1);
+function loadModeCfg(cfg, kind, type) {
+  const key = modeCfgKey(kind, type);
+  if (Object.prototype.hasOwnProperty.call(cfg, key)) return cfg[key] || '';
+  const legacyType = cfg[kind + 'TaskType'] || cfg.taskType;
+  return legacyType === type ? (cfg[kind] || '') : '';
+}
+const saveCfg = () => {
+  const previous = loadCfg();
+  const mode = activeTaskType || $('taskType').value;
+  const next = {
+    ...previous,
+    apiBase: $('apiBase').value, apiKey: $('apiKey').value, model: $('model').value, prompt: $('prompt').value,
+    inputs: [...document.querySelectorAll('.chip.on')].map(c => c.textContent),
+    output: $('outputSel').value, concurrency: $('concurrency').value, maxRows: $('maxRows').value, imgSize: $('imgSize').value,
+    taskType: $('taskType').value, taskCol: $('taskCol').value,
+    vidApiKind: $('vidApiKind').value, vidApiBase: $('vidApiBase').value, vidApiKey: $('vidApiKey').value,
+    vidModel: $('vidModel').value, vidDur: $('vidDur').value, vidRes: $('vidRes').value, vidRatio: $('vidRatio').value, vidImgMode: $('vidImgMode').value,
+    modelTaskType: mode, outputTaskType: mode,
+  };
+  if (mode === 'text' || mode === 'image') next[modeCfgKey('model', mode)] = $('model').value;
+  next[modeCfgKey('output', mode)] = $('outputSel').value;
+  localStorage.setItem(CFG_KEY, JSON.stringify(next));
+};
 
 // ── 任务类型切换:文本/图片/视频各自显示对应表单,输出列类型跟着换 ──
 const taskType = () => $('taskType').value;
@@ -538,10 +555,11 @@ function fillOutputSel() {
   const cfg = loadCfg();
   const sel = $('outputSel'); sel.innerHTML = '';
   const wantAttach = !isTextMode();
+  const savedOutput = loadModeCfg(cfg, 'output', taskType());
   const fs = fieldMetas.filter(f => wantAttach ? f.type === 17 : f.type === 1);
   for (const f of fs) {
     const o = document.createElement('option'); o.value = f.id; o.textContent = f.name;
-    if (cfg.output === f.id) o.selected = true; sel.appendChild(o);
+    if (savedOutput === f.id) o.selected = true; sel.appendChild(o);
   }
   if (!fs.length) {
     const o = document.createElement('option'); o.value = '';
@@ -574,6 +592,13 @@ function toggleTaskUI() {
   }
   if (!running) $('runBtn').textContent = runBtnLabel();
   if (fieldMetas.length) fillOutputSel();
+}
+function switchTaskType() {
+  saveCfg(); // 先保存切换前的模型和输出列，避免三种任务互相覆盖配置
+  activeTaskType = taskType();
+  $('model').value = loadModeCfg(loadCfg(), 'model', activeTaskType);
+  toggleTaskUI();
+  saveCfg();
 }
 
 // ── 全局状态 ──
@@ -615,15 +640,16 @@ async function init() {
   const cfg = loadCfg();
   $('apiBase').value = cfg.apiBase || '';
   $('apiKey').value = cfg.apiKey || '';
-  $('model').value = cfg.model || '';
   $('prompt').value = cfg.prompt || '';
   if (cfg.concurrency) $('concurrency').value = cfg.concurrency;
   if (cfg.maxRows) $('maxRows').value = cfg.maxRows;
   if (cfg.imgSize) $('imgSize').value = cfg.imgSize;
   if (cfg.taskType) $('taskType').value = cfg.taskType;
+  activeTaskType = taskType();
+  $('model').value = loadModeCfg(cfg, 'model', activeTaskType);
   ['vidApiKind','vidApiBase','vidApiKey','vidModel','vidDur','vidRes','vidRatio','vidImgMode'].forEach(id => { if (cfg[id] != null && cfg[id] !== '') $(id).value = cfg[id]; });
-  ['apiBase','apiKey','model','prompt','outputSel','concurrency','maxRows','imgSize','taskType','taskCol','vidApiKind','vidApiBase','vidApiKey','vidModel','vidDur','vidRes','vidRatio','vidImgMode'].forEach(id => $(id).addEventListener('change', saveCfg));
-  $('taskType').addEventListener('change', () => { toggleTaskUI(); saveCfg(); });
+  ['apiBase','apiKey','model','prompt','outputSel','concurrency','maxRows','imgSize','taskCol','vidApiKind','vidApiBase','vidApiKey','vidModel','vidDur','vidRes','vidRatio','vidImgMode'].forEach(id => $(id).addEventListener('change', saveCfg));
+  $('taskType').addEventListener('change', switchTaskType);
   toggleTaskUI();
   try { await refreshTable(); } catch (e) { log('读取表格失败: ' + (e && e.message ? e.message : e), 1); }
   try {
